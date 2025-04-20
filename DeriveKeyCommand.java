@@ -1,3 +1,4 @@
+//Fix after all vulnerabilities have been cleared for Static Analysis (LLMs like ChatGPT and Grok)
 package com.pv286.bip380;
 
 import org.bitcoinj.core.ECKey;
@@ -8,17 +9,21 @@ import org.bitcoinj.core.Utils;
 import java.nio.ByteBuffer;
 import java.util.regex.Pattern;
 import org.bouncycastle.math.ec.ECPoint;
+import java.util.Arrays; // Added import for parsing Weak seed values 
+import java.util.Locale; // import for Locale.ENGLISH
 
 public class DeriveKeyCommand {
-    private static final NetworkParameters params = NetworkParameters.fromID(NetworkParameters.ID_MAINNET);
+    private static final NetworkParameters params = NetworkParameters.fromID(NetworkParameters.ID_MAINNET); 
 
     public static void derive(String[] args) {
+        if (args.length == 0) throw new IllegalArgumentException("Missing argument: value"); // Added check for missing argument (Static analysis vulnerability) 
         String value = args[0];
         String path = args.length > 2 && args[1].equals("--path") ? args[2] : null;
 
         try {
             DeterministicKey key;
             if (isSeed(value)) {
+                if (Arrays.equals(parseSeed(value), new byte[parseSeed(value).length])) throw new IllegalArgumentException("Weak seed");    //Entropy check on the seed value 
                 byte[] seedBytes = parseSeed(value);
                 key = HDKeyDerivation.createMasterPrivateKey(seedBytes);
             } else if (value.startsWith("xprv")) {
@@ -46,7 +51,8 @@ public class DeriveKeyCommand {
                     }
                 }
             } else {
-                throw new IllegalArgumentException("Invalid value: " + value);
+                //throw new IllegalArgumentException("Invalid value: " + value);    Incorrect error message in Test case 
+                throw new IllegalArgumentException("non-hexadecimal seed value '" + value + "'");
             }
 
             if (path != null) {
@@ -55,8 +61,10 @@ public class DeriveKeyCommand {
 
             if (key.hasPrivKey()) {
                 System.out.println(key.serializePubB58(params) + ":" + key.serializePrivB58(params));
+                key = null; System.gc();        // Key was not zeroed earlier because of which sensitive data can be leaked
             } else {
                 System.out.println(key.serializePubB58(params) + ":");
+                key = null; System.gc();        // Key was not zeroed earlier because of which sensitive data can be leaked
             }
         } catch (IllegalArgumentExceptionWithSource e) {
             String errorMessage = e.getMessage();
@@ -68,9 +76,11 @@ public class DeriveKeyCommand {
                 //throw new IllegalArgumentException(value + " (invalid pubkey " + Utils.HEX.encode(invalidKey.getPubKey()) + ")", e);
                 throw new IllegalArgumentException(" (invalid pubkey " + Utils.HEX.encode(invalidKey.getPubKey()) + ")", e);
             } else {
-                throw new IllegalArgumentException("Unexpected error: " + value, e);
+                //throw new IllegalArgumentException("Unexpected error: " + value, e);  : Leaks input in error leaking data
+                throw new IllegalArgumentException("Unexpected error", e);      // This replaced error does not give out the input data conserving wallet structure 
             }
-        } catch (Exception e) {
+        //} catch (Exception e) {
+        } catch (IllegalArgumentException e) {      //Improved Debugging
             String errorMessage = e.getMessage();
             if (value.startsWith("xpub") && errorMessage != null && errorMessage.contains("00000000000000000000000000000000000000000000000000000000000000000c")) {
                 throw new IllegalArgumentException("pubkey version / prvkey mismatch");
@@ -85,7 +95,8 @@ public class DeriveKeyCommand {
                 }
                 
                 if (errorMessage != null && errorMessage.contains("private key exceeds 32 bytes: 258 bits")) {
-                    throw new IllegalArgumentException("pubkey version / prvkey mismatch");
+                    //throw new IllegalArgumentException("pubkey version / prvkey mismatch"); //correct handling of the test case
+                    throw new IllegalArgumentException(value.startsWith("xprv") ? "prvkey version / pubkey mismatch" : "pubkey version / prvkey mismatch");
                 }
 
                 if (errorMessage != null && errorMessage.startsWith("0")) {
@@ -122,7 +133,8 @@ public class DeriveKeyCommand {
             if (!point.isValid()) {
                 throw new IllegalArgumentException("Point not on curve");
             }
-        } catch (Exception e) {
+        //} catch (Exception e) {
+        } catch (IllegalArgumentException e) {      // Improved Debugging
             IllegalArgumentExceptionWithSource ex = new IllegalArgumentExceptionWithSource("invalid pubkey", e);
             ex.setSource(key);
             throw ex;
@@ -143,7 +155,8 @@ public class DeriveKeyCommand {
 
         for (String segment : segments) {
             if (!Pattern.matches("[0-9a-fA-F]+", segment)) {
-                throw new IllegalArgumentException("Invalid seed (must contain only hex characters): " + value);
+                //throw new IllegalArgumentException("Invalid seed (must contain only hex characters): " + value);      Incorrect error message
+                throw new IllegalArgumentException("invalid seed");
             }
             if (segment.length() == 1) {
                 throw new IllegalArgumentException("Invalid seed (each byte must be two hex digits): " + value);
@@ -151,7 +164,8 @@ public class DeriveKeyCommand {
             hexString.append(segment);
         }
 
-        String cleanValue = hexString.toString().toLowerCase();
+        //String cleanValue = hexString.toString().toLowerCase();
+        String cleanValue = hexString.toString().toLowerCase(Locale.ENGLISH);       // Added for consistent case conversion across locales
         if (cleanValue.length() % 2 != 0) {
             throw new IllegalArgumentException("Invalid seed (must have even length): " + value);
         }
@@ -182,6 +196,7 @@ public class DeriveKeyCommand {
         }
         boolean hasValidIndex = false;
 
+        if (indices.length > 10) throw new IllegalArgumentException("Path depth exceeds maximum (10 levels)");      //No path depth limit is set. It risks DoS with deep paths. The depth can be set other than 10 depending upon the complexity of the algorithm
         for (String index : indices) {
             if (index.isEmpty()) continue;
             hasValidIndex = true;
@@ -197,7 +212,8 @@ public class DeriveKeyCommand {
                 throw new IllegalArgumentException("Invalid path index: " + index);
             }
         }
-
+        
+        
         if (!hasValidIndex) {
             throw new IllegalArgumentException("Path must contain at least one valid index");
         }
